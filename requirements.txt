@@ -1,0 +1,18 @@
+# ============================================================
+# BOTFORGE — requirements.txt
+# ============================================================
+
+# Telegram bot framework
+aiogram==3.7.0
+
+# PostgreSQL async driver (Neon uchun)
+asyncpg==0.30.0
+
+# Excel eksport
+openpyxl==3.1.2
+
+# Orqa fon vazifalari (scheduler)
+APScheduler==3.10.4
+
+# Web server (webhook uchun)
+aiohttp==3.9.5
