@@ -3,7 +3,7 @@
 # ============================================================
 
 # Telegram bot framework
-aiogram==3.7.0
+aiogram==3.13.1
 
 # PostgreSQL async driver (Neon uchun)
 asyncpg==0.30.0
