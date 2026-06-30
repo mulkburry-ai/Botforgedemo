@@ -7,6 +7,7 @@ import logging
 import asyncio
 from aiohttp import web
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.webhook.aiohttp_server import (
@@ -30,7 +31,10 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 def create_bot() -> Bot:
-    return Bot(token=BOT_TOKEN, parse_mode=ParseMode.MARKDOWN)
+    return Bot(
+        token=BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
+    )
 
 
 def create_dispatcher() -> Dispatcher:
