@@ -6,7 +6,14 @@
 
 from aiogram import Router
 
-from . import common, catalog, cart, profile, info
+# Har bir modul alohida import qilinadi — chuqur importlar
+# (masalan cart.py -> keyboards -> keyboards.admin) bilan
+# to'qnashmasligi uchun bitta qatorga yig'ilmaydi.
+from . import common
+from . import catalog
+from . import cart
+from . import profile
+from . import info
 from .admin import admin_router
 
 main_router = Router()
