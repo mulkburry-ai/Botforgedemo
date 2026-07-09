@@ -325,10 +325,16 @@ async def cb_settings(
             text=f"✏️ {label}",
             callback_data=f"settings_edit:{key}"
         ))
-    builder.row(InlineKeyboardButton(
-        text="🔙 Orqaga",
-        callback_data=AdminCB(section="stats").pack()
-    ))
+    builder.row(
+        InlineKeyboardButton(
+            text="🔙 Orqaga",
+            callback_data=AdminCB(section="stats").pack()
+        ),
+        InlineKeyboardButton(
+            text="🏠 Bosh menyu",
+            callback_data=AdminCB(section="main").pack()
+        )
+    )
 
     await callback.message.edit_text(
         text="\n".join(lines),
