@@ -20,6 +20,7 @@ from config import (
 )
 from db import create_pool, close_pool
 from handlers import main_router
+from handlers.common import error_handler
 from middlewares import RateLimitMiddleware
 from scheduler import create_scheduler
 
@@ -39,6 +40,9 @@ def create_bot() -> Bot:
 
 def create_dispatcher() -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
+
+    # Xavfsizlik to'ri — kutilmagan xatolarni tutib, botni "jim qolishdan" saqlaydi
+    dp.error.register(error_handler)
 
     # Middleware — har bir xabar va callback dan oldin ishlaydi
     dp.message.middleware(RateLimitMiddleware())

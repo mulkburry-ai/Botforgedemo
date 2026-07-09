@@ -20,7 +20,7 @@ from db import (
     get_low_stock_products, get_setting,
     get_all_orders_for_export, get_all_products_for_export,
 )
-from utils import fmt_price, fmt_date_short
+from utils import fmt_date_short
 
 logger = logging.getLogger(__name__)
 
