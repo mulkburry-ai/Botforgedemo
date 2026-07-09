@@ -6,13 +6,12 @@
 
 import logging
 from aiogram import Router, F
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery, ErrorEvent
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 
 from config import ADMIN_ID
-from db import get_or_create_user, get_dashboard
-from db import get_setting  # settings jadvalidan qiymat olish
+from db import get_or_create_user, get_dashboard, get_setting
 from keyboards import main_menu_kb, admin_panel_kb
 from utils import fmt_dashboard
 
@@ -91,8 +90,6 @@ async def cmd_admin(message: Message, state: FSMContext) -> None:
 # NOOP CALLBACK — Hech narsa qilmaydigan tugmalar
 # ============================================================
 
-from aiogram.types import CallbackQuery
-
 @router.callback_query(F.data == "noop")
 async def noop_handler(callback: CallbackQuery) -> None:
     """
@@ -105,8 +102,6 @@ async def noop_handler(callback: CallbackQuery) -> None:
 # ============================================================
 # XATOLIK TUTISH
 # ============================================================
-
-from aiogram.types import ErrorEvent
 
 async def error_handler(event: ErrorEvent) -> None:
     """

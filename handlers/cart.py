@@ -11,9 +11,9 @@ from aiogram.fsm.state import State, StatesGroup
 
 from config import ADMIN_ID
 from db import (
-    get_cart, add_to_cart, remove_from_cart,
+    get_cart, sync_cart_with_stock, add_to_cart, remove_from_cart,
     clear_cart, get_cart_total, create_order,
-    get_user, get_product, get_variants, get_setting,
+    get_user, get_product, get_available_stock, get_setting,
     save_phone, get_order, get_order_items,
 )
 from keyboards import (
@@ -44,9 +44,19 @@ class OrderState(StatesGroup):
 
 @router.message(F.text == "🧺 Savat")
 async def show_cart(message: Message, state: FSMContext) -> None:
-    """Foydalanuvchi savatini ko'rsatish."""
+    """
+    Foydalanuvchi savatini ko'rsatish.
+    Ko'rsatishdan oldin stok bilan solishtiriladi — agar biror
+    narsa tugagan yoki kamaygan bo'lsa, avtomatik to'g'irlanadi va
+    mijozga ogohlantiriladi (Burry taklifi).
+    """
     await state.clear()
     user_id = message.from_user.id
+
+    changes = await sync_cart_with_stock(user_id)
+    if changes:
+        await message.answer(_fmt_stock_changes(changes), parse_mode="Markdown")
+
     items = await get_cart(user_id)
 
     if not items:
@@ -66,6 +76,20 @@ async def show_cart(message: Message, state: FSMContext) -> None:
     )
 
 
+def _fmt_stock_changes(changes: list) -> str:
+    """Savatdagi avtomatik o'zgarishlar haqida ogohlantirish matni."""
+    lines = ["⚠️ *Diqqat! Savatingizda o'zgarish bo'ldi:*\n"]
+    for c in changes:
+        if c["type"] == "removed":
+            lines.append(f"❌ *{c['name']}* — tugab qolgani uchun savatdan olib tashlandi")
+        else:
+            lines.append(
+                f"⚠️ *{c['name']}* — endi faqat {c['new_qty']} dona bor "
+                f"(oldin {c['old_qty']} ta edi), savatingiz yangilandi"
+            )
+    return "\n".join(lines)
+
+
 # ============================================================
 # SAVATGA QO'SHISH
 # ============================================================
@@ -76,40 +100,41 @@ async def cb_add_to_cart(
     callback_data: ProductCB
 ) -> None:
     """
-    Mahsulotni savatga qo'shish.
-    Turlar bor bo'lsa — tur tanlash so'raladi.
+    Miqdor tanlash ekranida "🛒 Savatga solish" bosilganda —
+    yakuniy, real-vaqtdagi stok tekshiruvidan keyin savatga qo'shiladi.
+
+    Diqqat: bu yerga kelguncha mijoz allaqachon tur (kerak bo'lsa) va
+    miqdorni tanlagan (qty_start/variant_pick/qty orqali). Shu sababli
+    bu funksiya faqat YAKUNIY xavfsizlik tekshiruvini bajaradi — chunki
+    mijoz ekranda turgan payt boshqa birov sotib olgan bo'lishi mumkin.
     """
     user_id = callback.from_user.id
     product_id = callback_data.product_id
     variant_id = callback_data.variant_id or None
+    qty = max(1, callback_data.qty)
 
     product = await get_product(product_id)
     if not product:
         await callback.answer("Mahsulot topilmadi", show_alert=True)
         return
 
-    # Turlar bor lekin variant tanlanmagan
-    variants = await get_variants(product_id)
-    if variants and not variant_id:
-        await callback.answer(
-            "⬆️ Avval tur tanlang",
-            show_alert=True
-        )
+    # Yakuniy, real-vaqtdagi stok tekshiruvi
+    available = await get_available_stock(product_id, variant_id)
+    if available <= 0:
+        await callback.answer("😔 Bu mahsulot/tur tugab qoldi.", show_alert=True)
         return
 
-    # Stok tekshirish
-    if variant_id:
-        variant = next((v for v in variants if v["id"] == variant_id), None)
-        if variant and variant["stock_qty"] == 0:
-            await callback.answer("🚫 Bu tur tugagan", show_alert=True)
-            return
-    else:
-        if product["stock_qty"] == 0:
-            await callback.answer("🚫 Mahsulot tugagan", show_alert=True)
-            return
+    final_qty = min(qty, available)
 
-    await add_to_cart(user_id, product_id, variant_id)
-    await callback.answer("✅ Savatga qo'shildi!")
+    await add_to_cart(user_id, product_id, variant_id, final_qty)
+
+    if final_qty < qty:
+        await callback.answer(
+            f"⚠️ Faqat {final_qty} dona bor edi — shuncha qo'shildi.",
+            show_alert=True
+        )
+    else:
+        await callback.answer(f"✅ {final_qty} dona savatga qo'shildi!")
 
 
 # ============================================================
@@ -173,10 +198,22 @@ async def cb_checkout(
     tasdiqlanadi, yo'q bo'lsa kiritish so'raladi.
     """
     user_id = callback.from_user.id
+
+    # Yakuniy tekshiruv — checkout boshlanishidan oldin savat qayta
+    # sinxronlanadi (Burry talabi: har doim eng so'nggi stok bilan ishlash)
+    changes = await sync_cart_with_stock(user_id)
+    if changes:
+        await callback.message.answer(
+            _fmt_stock_changes(changes), parse_mode="Markdown"
+        )
+
     items = await get_cart(user_id)
 
     if not items:
-        await callback.answer("Savat bo'sh", show_alert=True)
+        await callback.answer(
+            "Savat bo'sh qoldi — mahsulotlar tugab qolgan edi.",
+            show_alert=True
+        )
         return
 
     # Minimal buyurtma summasi tekshirish

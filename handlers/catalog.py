@@ -6,18 +6,20 @@
 
 import logging
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
 
 from db import (
     get_main_categories, get_subcategories,
     get_products, get_product, get_variants,
+    get_effective_stock, get_available_stock,
     is_favorite, add_last_seen, get_setting,
+    add_favorite, remove_favorite,
 )
 from keyboards import (
     CatalogCB, ProductCB,
     categories_kb, subcategories_kb, products_list_kb,
-    product_card_kb, variant_select_kb,
+    product_card_kb, variant_select_kb, qty_select_kb,
 )
 from utils import fmt_product_card
 
@@ -178,8 +180,8 @@ async def cb_product_detail(
     # Oxirgi ko'rilganlarga qo'shish
     await add_last_seen(callback.from_user.id, product_id)
 
-    # Turlar borligini tekshirish
-    variants = await get_variants(product_id)
+    # Turlar va haqiqiy stok — bitta manbadan (db/products.py)
+    effective = await get_effective_stock(product_id)
 
     # Sevimlilar holati
     fav = await is_favorite(callback.from_user.id, product_id)
@@ -191,12 +193,11 @@ async def cb_product_detail(
     gallery = product.get("gallery_ids") or []
     gallery_total = len(gallery) + (1 if product.get("photo_id") else 0)
 
-    # Stok
-    in_stock = product["stock_qty"] > 0 if not variants else any(
-        v["stock_qty"] > 0 for v in variants
-    )
+    in_stock = effective["total_stock"] > 0
 
-    text = fmt_product_card(product, low_stock_threshold=threshold)
+    text = fmt_product_card(
+        product, low_stock_threshold=threshold, effective_stock=effective
+    )
 
     # Rasmli yoki rasmsiz
     photo = product.get("photo_id")
@@ -205,6 +206,7 @@ async def cb_product_detail(
         gallery_total=gallery_total,
         is_favorite=fav,
         in_stock=in_stock,
+        has_variants=effective["has_variants"],
         back_cat_id=product.get("category_id", 0),
         page=page
     )
@@ -230,7 +232,6 @@ async def cb_product_detail(
             parse_mode="Markdown"
         )
 
-    # Turlar bor bo'lsa variant tanlash keyingi qadam
     await callback.answer()
 
 
@@ -239,7 +240,7 @@ async def cb_variant_select(
     callback: CallbackQuery,
     callback_data: ProductCB
 ) -> None:
-    """Mahsulot turi tanlash."""
+    """Mahsulot turlari ro'yxatini ko'rsatish."""
     product_id = callback_data.product_id
     variants = await get_variants(product_id)
 
@@ -253,6 +254,112 @@ async def cb_variant_select(
         parse_mode="Markdown"
     )
     await callback.answer()
+
+
+@router.callback_query(ProductCB.filter(F.action == "variant_pick"))
+async def cb_variant_pick(
+    callback: CallbackQuery,
+    callback_data: ProductCB
+) -> None:
+    """
+    Mijoz ro'yxatdan bitta turni tanladi — endi miqdor tanlash
+    ekraniga o'tamiz, shu turning HOZIRGI stokiga bog'liq holda.
+    """
+    available = await get_available_stock(
+        callback_data.product_id, callback_data.variant_id
+    )
+    if available <= 0:
+        await callback.answer("😔 Bu tur tugagan", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        text="🔢 *Miqdorni tanlang:*",
+        reply_markup=qty_select_kb(
+            product_id=callback_data.product_id,
+            variant_id=callback_data.variant_id,
+            qty=1,
+            max_stock=available,
+            back_action="variant"
+        ),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(ProductCB.filter(F.action == "qty_start"))
+async def cb_qty_start(
+    callback: CallbackQuery,
+    callback_data: ProductCB
+) -> None:
+    """
+    Turlarsiz mahsulotda "Savatga solish" bosilganda —
+    to'g'ridan miqdor tanlash ekraniga o'tamiz.
+    """
+    available = await get_available_stock(callback_data.product_id)
+    if available <= 0:
+        await callback.answer("😔 Mahsulot tugagan", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        text="🔢 *Miqdorni tanlang:*",
+        reply_markup=qty_select_kb(
+            product_id=callback_data.product_id,
+            variant_id=0,
+            qty=1,
+            max_stock=available,
+            back_action="detail"
+        ),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(ProductCB.filter(F.action == "qty"))
+async def cb_qty_change(
+    callback: CallbackQuery,
+    callback_data: ProductCB
+) -> None:
+    """
+    ➖ yoki ➕ bosilganda. Har safar HOZIRGI stok qayta tekshiriladi
+    (Burry talabi: "iloji boricha tez-tez tekshirish") — chunki
+    mijoz ekranda turgan payt boshqa birov sotib olishi mumkin.
+    """
+    available = await get_available_stock(
+        callback_data.product_id, callback_data.variant_id
+    )
+
+    if available <= 0:
+        await callback.answer(
+            "😔 Bu mahsulot/tur tugab qoldi.", show_alert=True
+        )
+        return
+
+    # Agar tanlangan son yangi stokdan oshib qolgan bo'lsa — moslashtiramiz
+    qty = min(callback_data.qty, available)
+    qty = max(1, qty)
+
+    back_action = "variant" if callback_data.variant_id else "detail"
+
+    try:
+        await callback.message.edit_text(
+            text="🔢 *Miqdorni tanlang:*",
+            reply_markup=qty_select_kb(
+                product_id=callback_data.product_id,
+                variant_id=callback_data.variant_id,
+                qty=qty,
+                max_stock=available,
+                back_action=back_action
+            ),
+            parse_mode="Markdown"
+        )
+    except Exception:
+        # Xabar o'zgarmagan bo'lsa (masalan allaqachon chegarada) — jim o'tamiz
+        pass
+
+    if callback_data.qty > available:
+        await callback.answer(f"⚠️ Faqat {available} dona bor")
+    else:
+        await callback.answer()
 
 
 @router.callback_query(ProductCB.filter(F.action == "gallery"))
@@ -285,16 +392,15 @@ async def cb_gallery(
     photo_id = all_photos[gallery_idx]
     fav = await is_favorite(callback.from_user.id, product_id)
     threshold = int(await get_setting("low_stock_threshold", "5"))
-    variants = await get_variants(product_id)
-    in_stock = product["stock_qty"] > 0 if not variants else any(
-        v["stock_qty"] > 0 for v in variants
-    )
+    effective = await get_effective_stock(product_id)
+    in_stock = effective["total_stock"] > 0
 
-    from aiogram.types import InputMediaPhoto
     await callback.message.edit_media(
         media=InputMediaPhoto(
             media=photo_id,
-            caption=fmt_product_card(product, low_stock_threshold=threshold),
+            caption=fmt_product_card(
+                product, low_stock_threshold=threshold, effective_stock=effective
+            ),
             parse_mode="Markdown"
         ),
         reply_markup=product_card_kb(
@@ -303,6 +409,7 @@ async def cb_gallery(
             gallery_total=len(all_photos),
             is_favorite=fav,
             in_stock=in_stock,
+            has_variants=effective["has_variants"],
             back_cat_id=product.get("category_id", 0),
         )
     )
@@ -312,8 +419,6 @@ async def cb_gallery(
 # ============================================================
 # SEVIMLILAR
 # ============================================================
-
-from db import add_favorite, remove_favorite
 
 @router.callback_query(ProductCB.filter(F.action == "favorite"))
 async def cb_toggle_favorite(
@@ -337,11 +442,8 @@ async def cb_toggle_favorite(
     if not product:
         return
 
-    variants = await get_variants(product_id)
-    in_stock = product["stock_qty"] > 0 if not variants else any(
-        v["stock_qty"] > 0 for v in variants
-    )
-    threshold = int(await get_setting("low_stock_threshold", "5"))
+    effective = await get_effective_stock(product_id)
+    in_stock = effective["total_stock"] > 0
     gallery = product.get("gallery_ids") or []
     gallery_total = len(gallery) + (1 if product.get("photo_id") else 0)
 
@@ -350,6 +452,7 @@ async def cb_toggle_favorite(
         gallery_total=gallery_total,
         is_favorite=not fav,
         in_stock=in_stock,
+        has_variants=effective["has_variants"],
         back_cat_id=product.get("category_id", 0),
     )
 
