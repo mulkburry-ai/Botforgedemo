@@ -46,6 +46,19 @@ class StatsAdminCB(CallbackData, prefix="sadm"):
     section: str    # "general"|"revenue"|"top"|"least"|"export"|"settings"
 
 
+def _home_btn() -> InlineKeyboardButton:
+    """
+    Barcha "chuqur" sahifalarda ishlatiladigan "Bosh menyu" tugmasi.
+    Menyu darajasidagi sahifalarda (masalan Mahsulotlar bo'limi) kerak
+    emas — u yerda "Orqaga" allaqachon Bosh menyuga olib boradi.
+    Faqat 2 va undan ortiq qadam chuqurlikdagi sahifalarda qo'llanadi.
+    """
+    return InlineKeyboardButton(
+        text="🏠 Bosh menyu",
+        callback_data=AdminCB(section="main").pack()
+    )
+
+
 # ============================================================
 # ADMIN PANEL — Asosiy menyu
 # ============================================================
@@ -167,16 +180,27 @@ def products_list_kb(
     if nav:
         builder.row(*nav)
 
-    builder.row(InlineKeyboardButton(
-        text="🔙 Orqaga",
-        callback_data=AdminCB(section="products").pack()
-    ))
+    builder.row(
+        InlineKeyboardButton(
+            text="🔙 Orqaga",
+            callback_data=AdminCB(section="products").pack()
+        ),
+        _home_btn()
+    )
     return builder.as_markup()
 
 
-def product_detail_kb(product_id: int, is_active: bool, page: int = 1) -> InlineKeyboardMarkup:
+def product_detail_kb(
+    product_id: int,
+    is_active: bool,
+    page: int = 1,
+    has_variants: bool = False
+) -> InlineKeyboardMarkup:
     """
     Bitta mahsulot detail sahifasi — barcha amallar.
+
+    has_variants — True bo'lsa, "📦 Stok" o'rniga turlar bilan ishlash
+    tugmalari ko'rsatiladi ("➕ Yangi tur qo'shish" qo'shiladi).
     """
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -207,16 +231,26 @@ def product_detail_kb(product_id: int, is_active: bool, page: int = 1) -> Inline
             ).pack()
         )
     )
+    if has_variants:
+        builder.row(InlineKeyboardButton(
+            text="➕ Yangi tur qo'shish",
+            callback_data=ProductAdminCB(
+                action="add_variant", product_id=product_id, page=page
+            ).pack()
+        ))
     builder.row(InlineKeyboardButton(
         text="🗑 O'chirish",
         callback_data=ProductAdminCB(
             action="delete", product_id=product_id, page=page
         ).pack()
     ))
-    builder.row(InlineKeyboardButton(
-        text="🔙 Ro'yxatga",
-        callback_data=ProductAdminCB(action="list", page=page).pack()
-    ))
+    builder.row(
+        InlineKeyboardButton(
+            text="🔙 Ro'yxatga",
+            callback_data=ProductAdminCB(action="list", page=page).pack()
+        ),
+        _home_btn()
+    )
     return builder.as_markup()
 
 
@@ -319,10 +353,13 @@ def orders_list_kb(
     if nav:
         builder.row(*nav)
 
-    builder.row(InlineKeyboardButton(
-        text="🔙 Orqaga",
-        callback_data=AdminCB(section="orders").pack()
-    ))
+    builder.row(
+        InlineKeyboardButton(
+            text="🔙 Orqaga",
+            callback_data=AdminCB(section="orders").pack()
+        ),
+        _home_btn()
+    )
     return builder.as_markup()
 
 
@@ -330,35 +367,83 @@ def order_detail_kb(order_id: int, current_status: str, page: int = 1) -> Inline
     """
     Buyurtma detail — holat o'zgartirish tugmalari.
     Faqat mantiqiy keyingi holatlarga o'tish mumkin.
+
+    Diqqat: "confirmed" holatida "Yo'lga chiqarish" tugmasi maxsus —
+    u to'g'ridan-to'g'ri holatni o'zgartirmaydi, balki yetkazib berish
+    narxi/vaqti so'raladigan alohida jarayonni (FSM) boshlaydi.
+    Shu sababli bu tugma uchun action="ship" ishlatiladi, boshqalari
+    uchun action="status".
     """
     builder = InlineKeyboardBuilder()
 
-    # Holat o'zgartirish tugmalari
-    transitions = {
-        "pending":   [("confirmed", "✅ Qabul qilish"), ("cancelled", "❌ Rad etish")],
-        "confirmed": [("shipping",  "🚚 Yo'lga chiqarish"), ("problem", "⚠️ Muammo")],
-        "shipping":  [("delivered", "📦 Yetkazildi"), ("problem", "⚠️ Muammo")],
-        "delivered": [],
-        "cancelled": [],
-        "problem":   [("confirmed", "✅ Qayta qabul"), ("cancelled", "❌ Bekor")],
-    }
-
-    for new_status, label in transitions.get(current_status, []):
+    if current_status == "pending":
         builder.row(InlineKeyboardButton(
-            text=label,
+            text="✅ Qabul qilish",
             callback_data=OrderAdminCB(
-                action="status",
-                order_id=order_id,
-                status=new_status
+                action="status", order_id=order_id, status="confirmed"
+            ).pack()
+        ))
+        builder.row(InlineKeyboardButton(
+            text="❌ Rad etish",
+            callback_data=OrderAdminCB(
+                action="status", order_id=order_id, status="cancelled"
             ).pack()
         ))
 
-    builder.row(InlineKeyboardButton(
-        text="🔙 Ro'yxatga",
-        callback_data=OrderAdminCB(
-            action="list", status=current_status, page=page
-        ).pack()
-    ))
+    elif current_status == "confirmed":
+        builder.row(InlineKeyboardButton(
+            text="🚚 Yo'lga chiqarish",
+            callback_data=OrderAdminCB(
+                action="ship", order_id=order_id, page=page
+            ).pack()
+        ))
+        builder.row(InlineKeyboardButton(
+            text="⚠️ Muammo",
+            callback_data=OrderAdminCB(
+                action="status", order_id=order_id, status="problem"
+            ).pack()
+        ))
+
+    elif current_status == "shipping":
+        builder.row(InlineKeyboardButton(
+            text="📦 Yetkazildi",
+            callback_data=OrderAdminCB(
+                action="status", order_id=order_id, status="delivered"
+            ).pack()
+        ))
+        builder.row(InlineKeyboardButton(
+            text="⚠️ Muammo",
+            callback_data=OrderAdminCB(
+                action="status", order_id=order_id, status="problem"
+            ).pack()
+        ))
+
+    elif current_status == "problem":
+        builder.row(InlineKeyboardButton(
+            text="✅ Qayta qabul",
+            callback_data=OrderAdminCB(
+                action="status", order_id=order_id, status="confirmed"
+            ).pack()
+        ))
+        builder.row(InlineKeyboardButton(
+            text="❌ Bekor",
+            callback_data=OrderAdminCB(
+                action="status", order_id=order_id, status="cancelled"
+            ).pack()
+        ))
+
+    # "delivered" va "cancelled" holatlarida holat o'zgartirish tugmasi yo'q —
+    # bular yakuniy holatlar.
+
+    builder.row(
+        InlineKeyboardButton(
+            text="🔙 Ro'yxatga",
+            callback_data=OrderAdminCB(
+                action="list", status=current_status, page=page
+            ).pack()
+        ),
+        _home_btn()
+    )
     return builder.as_markup()
 
 
@@ -429,10 +514,13 @@ def user_detail_kb(user_id: int, is_banned: bool) -> InlineKeyboardMarkup:
             action="msg", user_id=user_id
         ).pack()
     ))
-    builder.row(InlineKeyboardButton(
-        text="🔙 Orqaga",
-        callback_data=AdminCB(section="users").pack()
-    ))
+    builder.row(
+        InlineKeyboardButton(
+            text="🔙 Orqaga",
+            callback_data=AdminCB(section="users").pack()
+        ),
+        _home_btn()
+    )
     return builder.as_markup()
 
 
@@ -501,10 +589,13 @@ def stats_menu_kb() -> InlineKeyboardMarkup:
 def stats_back_kb() -> InlineKeyboardMarkup:
     """Ma'lumotlar ichki sahifalarida orqaga tugmasi."""
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(
-        text="🔙 Orqaga",
-        callback_data=AdminCB(section="stats").pack()
-    ))
+    builder.row(
+        InlineKeyboardButton(
+            text="🔙 Orqaga",
+            callback_data=AdminCB(section="stats").pack()
+        ),
+        _home_btn()
+    )
     return builder.as_markup()
 
 

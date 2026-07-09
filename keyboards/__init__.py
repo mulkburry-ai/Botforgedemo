@@ -11,7 +11,7 @@ from .user import (
     # Katalog
     categories_kb, subcategories_kb, products_list_kb,
     # Mahsulot
-    product_card_kb, variant_select_kb,
+    product_card_kb, variant_select_kb, qty_select_kb,
     # Savat
     cart_kb, checkout_confirm_kb, order_final_confirm_kb,
     # Buyurtmalar

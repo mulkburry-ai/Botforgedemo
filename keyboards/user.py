@@ -26,11 +26,12 @@ class CatalogCB(CallbackData, prefix="cat"):
 
 class ProductCB(CallbackData, prefix="prod"):
     """Mahsulot kartasi tugmalari."""
-    action: str        # "gallery" | "cart" | "favorite" | "back"
+    action: str        # "gallery"|"cart"|"favorite"|"back"|"variant"|"variant_pick"|"qty_start"|"qty"
     product_id: int = 0
     variant_id: int = 0
     gallery_idx: int = 0
     page: int = 1
+    qty: int = 1
 
 
 class CartCB(CallbackData, prefix="cart"):
@@ -200,13 +201,14 @@ def product_card_kb(
     gallery_total: int = 1,
     is_favorite: bool = False,
     in_stock: bool = True,
+    has_variants: bool = False,
     back_cat_id: int = 0,
     page: int = 1
 ) -> InlineKeyboardMarkup:
     """
     Mahsulot kartasi tugmalari:
     - Galereya navigatsiyasi (rasm ko'p bo'lsa)
-    - Savatga solish (stok bo'lsa)
+    - Turlar bo'lsa → "Turni tanlash", bo'lmasa → to'g'ridan miqdor tanlash
     - Sevimli
     - Orqaga
     """
@@ -239,20 +241,25 @@ def product_card_kb(
             ))
         builder.row(*gallery_row)
 
-    # Savatga solish
-    if in_stock:
+    # Asosiy amal tugmasi
+    if not in_stock:
         builder.row(InlineKeyboardButton(
-            text="🛒 Savatga solish",
+            text="🚫 Mahsulot tugagan",
+            callback_data="noop"
+        ))
+    elif has_variants:
+        builder.row(InlineKeyboardButton(
+            text="🎨 Turni tanlash",
             callback_data=ProductCB(
-                action="cart",
-                product_id=product_id,
-                variant_id=variant_id
+                action="variant", product_id=product_id
             ).pack()
         ))
     else:
         builder.row(InlineKeyboardButton(
-            text="🚫 Mahsulot tugagan",
-            callback_data="noop"
+            text="🛒 Savatga solish",
+            callback_data=ProductCB(
+                action="qty_start", product_id=product_id
+            ).pack()
         ))
 
     # Sevimli + Orqaga
@@ -275,18 +282,76 @@ def product_card_kb(
     return builder.as_markup()
 
 
+def qty_select_kb(
+    product_id: int,
+    variant_id: int,
+    qty: int,
+    max_stock: int,
+    back_action: str = "detail"
+) -> InlineKeyboardMarkup:
+    """
+    Miqdor tanlash ekrani — ➖/➕ tugmalari mavjud stokdan
+    OSHIB KETA OLMAYDI (Burry talabi).
+
+    back_action — "detail" (variantsiz mahsulot) yoki "variant"
+    (variant tanlangandan keyin "orqaga" turlar ro'yxatiga qaytishi uchun).
+    """
+    builder = InlineKeyboardBuilder()
+
+    minus_qty = max(1, qty - 1)
+    plus_qty = qty + 1 if qty < max_stock else qty
+
+    builder.row(
+        InlineKeyboardButton(
+            text="➖",
+            callback_data=ProductCB(
+                action="qty", product_id=product_id,
+                variant_id=variant_id, qty=minus_qty
+            ).pack()
+        ),
+        InlineKeyboardButton(
+            text=f"{qty} dona",
+            callback_data="noop"
+        ),
+        InlineKeyboardButton(
+            text="➕",
+            callback_data=ProductCB(
+                action="qty", product_id=product_id,
+                variant_id=variant_id, qty=plus_qty
+            ).pack()
+        ),
+    )
+    builder.row(InlineKeyboardButton(
+        text="🛒 Savatga solish",
+        callback_data=ProductCB(
+            action="cart", product_id=product_id,
+            variant_id=variant_id, qty=qty
+        ).pack()
+    ))
+    builder.row(InlineKeyboardButton(
+        text="◀️ Orqaga",
+        callback_data=ProductCB(
+            action=back_action, product_id=product_id
+        ).pack()
+    ))
+    return builder.as_markup()
+
+
 def variant_select_kb(variants: list, product_id: int) -> InlineKeyboardMarkup:
     """
     Mahsulot turlari tanlash (rangi, o'lchami va h.k.)
+    Tur tanlanganda "variant_pick" action ishlatiladi — bu "variant"
+    (ro'yxatni ko'rsatish) dan farqli, chunki tugma bosilganda endi
+    miqdor tanlash ekraniga o'tishi kerak, ro'yxat emas.
     """
     builder = InlineKeyboardBuilder()
     for v in variants:
         stock_icon = "🚫" if v["stock_qty"] == 0 else "✅"
         price_text = f" — {int(v['price']):,} so'm" if v.get("price") else ""
         builder.row(InlineKeyboardButton(
-            text=f"{stock_icon} {v['name']}{price_text}",
+            text=f"{stock_icon} {v['name']}{price_text} — {v['stock_qty']} dona",
             callback_data=ProductCB(
-                action="variant",
+                action="variant_pick",
                 product_id=product_id,
                 variant_id=v["id"]
             ).pack()
