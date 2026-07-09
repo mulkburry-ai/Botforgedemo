@@ -121,13 +121,26 @@ def fmt_order_progress(status: str) -> str:
 # ── MAHSULOT KARTASI ─────────────────────────────────────────
 
 def fmt_product_card(p: dict, variant: dict | None = None,
-                     low_stock_threshold: int = 5) -> str:
+                     low_stock_threshold: int = 5,
+                     effective_stock: dict | None = None) -> str:
     """
     Foydalanuvchiga ko'rsatiladigan mahsulot kartasi matni.
     p — mahsulot, variant — tanlangan tur (ixtiyoriy).
+
+    effective_stock — get_effective_stock() natijasi (ixtiyoriy).
+    Agar variant tanlanmagan bo'lsa-yu, mahsulotda turlar bo'lsa,
+    stok shu yerdan (turlar yig'indisi) olinadi — p['stock_qty']
+    emas, chunki u turlar bo'lganda ma'nosiz (odatda 0) bo'ladi.
     """
-    price = float(variant["price"] if variant and variant["price"] else p["price"])
-    stock = int(variant["stock_qty"] if variant else p["stock_qty"])
+    if variant:
+        price = float(variant["price"] if variant["price"] else p["price"])
+        stock = int(variant["stock_qty"])
+    elif effective_stock and effective_stock.get("has_variants"):
+        price = float(p["price"])
+        stock = int(effective_stock["total_stock"])
+    else:
+        price = float(p["price"])
+        stock = int(p["stock_qty"])
 
     lines = [f"*{p['name']}*", f"🆔 `#{p['id']}`"]
 
@@ -156,14 +169,25 @@ def fmt_product_card(p: dict, variant: dict | None = None,
     return "\n".join(lines)
 
 
-def fmt_product_admin(p: dict) -> str:
-    """Admin uchun mahsulot ma'lumotlari."""
+def fmt_product_admin(p: dict, effective_stock: dict | None = None) -> str:
+    """
+    Admin uchun mahsulot ma'lumotlari.
+
+    effective_stock — get_effective_stock() natijasi (ixtiyoriy).
+    Berilsa va turlar mavjud bo'lsa, "umumiy stok" turlar yig'indisidan
+    ko'rsatiladi (p['stock_qty'] emas — u turlar bo'lganda 0 va
+    ma'nosiz bo'ladi).
+    """
     lines = [
         f"*{p['name']}*",
         f"🆔 `#{p['id']}`",
         f"💰 {fmt_price(p['price'])}",
-        f"📦 Stok: {p['stock_qty']} dona",
     ]
+
+    if effective_stock and effective_stock.get("has_variants"):
+        lines.append(f"📦 Umumiy stok: *{effective_stock['total_stock']} dona* (turlardan)")
+    else:
+        lines.append(f"📦 Stok: {p['stock_qty']} dona")
 
     if p.get("discount_active") and p.get("discount_value"):
         val = p["discount_value"]
