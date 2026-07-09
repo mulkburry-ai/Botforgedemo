@@ -40,6 +40,68 @@ async def get_cart(user_id: int) -> list:
     return [dict(r) for r in rows]
 
 
+async def sync_cart_with_stock(user_id: int) -> list:
+    """
+    Savatdagi har bir mahsulotni HOZIRGI stok bilan solishtiradi va
+    kerak bo'lsa avtomatik to'g'irlaydi. Burry taklifi asosida:
+
+      - Stok 0 bo'lsa      → savatdan BUTUNLAY o'chiriladi
+      - Stok qisman bo'lsa → savatdagi son shu darajaga TUSHIRILADI
+
+    Bu funksiya ikki joyda chaqiriladi:
+      1. Mijoz savatini ochganda (ko'rsatishdan oldin)
+      2. Mijoz "Buyurtma berish" bosganda (yakuniy tekshiruv)
+
+    Qaytaradi: o'zgarishlar ro'yxati — mijozga ogohlantirish
+    ko'rsatish uchun. Hech narsa o'zgarmagan bo'lsa — bo'sh ro'yxat.
+    """
+    changes = []
+
+    async with get_pool().acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT
+                c.id AS cart_id,
+                c.qty,
+                p.name AS product_name,
+                v.name AS variant_name,
+                COALESCE(v.stock_qty, p.stock_qty) AS available
+            FROM cart c
+            JOIN products p ON p.id = c.product_id
+            LEFT JOIN variants v ON v.id = c.variant_id
+            WHERE c.user_id = $1
+        """, user_id)
+
+        for row in rows:
+            name = row["product_name"]
+            if row["variant_name"]:
+                name += f" ({row['variant_name']})"
+
+            available = row["available"] or 0
+
+            if available <= 0:
+                await conn.execute(
+                    "DELETE FROM cart WHERE id = $1", row["cart_id"]
+                )
+                changes.append({
+                    "type": "removed",
+                    "name": name,
+                })
+
+            elif available < row["qty"]:
+                await conn.execute(
+                    "UPDATE cart SET qty = $1 WHERE id = $2",
+                    available, row["cart_id"]
+                )
+                changes.append({
+                    "type": "reduced",
+                    "name": name,
+                    "old_qty": row["qty"],
+                    "new_qty": available,
+                })
+
+    return changes
+
+
 async def add_to_cart(
     user_id: int,
     product_id: int,
@@ -314,6 +376,21 @@ async def save_payment_photo(order_id: int, file_id: str) -> None:
         await conn.execute("""
             UPDATE orders SET payment_photo = $1 WHERE id = $2
         """, file_id, order_id)
+
+
+async def update_order_delivery(
+    order_id: int,
+    delivery_price: int,
+    delivery_time: str
+) -> None:
+    """Yetkazib berish narxi va vaqtini saqlash."""
+    async with get_pool().acquire() as conn:
+        await conn.execute("""
+            UPDATE orders
+            SET delivery_price = $1,
+                delivery_time  = $2
+            WHERE id = $3
+        """, delivery_price, delivery_time, order_id)
 
 
 # ── STATISTIKA UCHUN ─────────────────────────────────────────

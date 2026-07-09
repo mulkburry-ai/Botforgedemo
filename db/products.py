@@ -49,6 +49,62 @@ async def get_variants(product_id: int) -> list:
     return [dict(r) for r in rows]
 
 
+async def get_effective_stock(product_id: int) -> dict:
+    """
+    Mahsulotning HAQIQIY mavjud stokini hisoblaydi — yagona manba.
+    Butun bot davomida stok haqida gap ketganda shu funksiya ishlatiladi,
+    shunda hech qayerda ikki xil son ko'rsatilmaydi.
+
+    Qoida:
+      - Turlar bo'lsa → barcha turlar stokining YIG'INDISI
+      - Turlar bo'lmasa → mahsulotning o'z stok raqami
+
+    Qaytaradi:
+      {
+        "has_variants": True/False,
+        "total_stock":  umumiy son (butun),
+        "variants":     turlar ro'yxati (bo'sh bo'lishi mumkin)
+      }
+    """
+    variants = await get_variants(product_id)
+
+    if variants:
+        total = sum(v["stock_qty"] for v in variants)
+        return {
+            "has_variants": True,
+            "total_stock": total,
+            "variants": variants,
+        }
+
+    async with get_pool().acquire() as conn:
+        stock = await conn.fetchval(
+            "SELECT stock_qty FROM products WHERE id = $1", product_id
+        )
+    return {
+        "has_variants": False,
+        "total_stock": stock or 0,
+        "variants": [],
+    }
+
+
+async def get_available_stock(product_id: int, variant_id: int | None = None) -> int:
+    """
+    Aniq bitta tanlov uchun (masalan mijoz "M" o'lchamni tanlagan)
+    hozirgi mavjud sonni qaytaradi. Miqdor tanlashda (➕/➖ chegarasi)
+    va checkout paytida qayta tekshirishda ishlatiladi.
+    """
+    async with get_pool().acquire() as conn:
+        if variant_id:
+            value = await conn.fetchval(
+                "SELECT stock_qty FROM variants WHERE id = $1", variant_id
+            )
+        else:
+            value = await conn.fetchval(
+                "SELECT stock_qty FROM products WHERE id = $1", product_id
+            )
+    return value or 0
+
+
 
 
 async def search_products(query: str) -> list:

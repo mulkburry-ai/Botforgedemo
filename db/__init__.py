@@ -16,6 +16,7 @@ from .categories import (
 # Mahsulotlar
 from .products import (
     get_products, get_product, get_variants,
+    get_effective_stock, get_available_stock,
     search_products,
     add_favorite, remove_favorite, get_favorites, is_favorite,
     add_last_seen, get_last_seen,
@@ -36,12 +37,12 @@ from .users import (
 
 # Buyurtmalar va savat
 from .orders import (
-    get_cart, add_to_cart, update_cart_qty,
+    get_cart, sync_cart_with_stock, add_to_cart, update_cart_qty,
     remove_from_cart, clear_cart, get_cart_total,
     create_order, get_order, get_order_by_code,
     get_order_items, get_user_orders,
     get_orders_by_status, count_orders_by_status,
-    update_order_status, save_payment_photo,
+    update_order_status, save_payment_photo, update_order_delivery,
     count_orders_today, sum_orders_today,
 )
 
